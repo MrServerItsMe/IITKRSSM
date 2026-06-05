@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Rayleigh Fast Checker</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Servers</h1>
+        
+        <div style="text-align: center; margin-bottom: 15px;">
+            <button class="refresh-btn" onclick="refreshServers()">
+                Refresh Servers
+            </button>
+        </div>
+
+        <div class="sort-container">
+            <button class="sort-btn" data-sort="alpha" onclick="setSort('alpha')">A-Z Alphabetical</button>
+            <button class="sort-btn active" data-sort="event" onclick="setSort('event')">Next Rayleigh</button>
+            <button class="sort-btn" data-sort="age" onclick="setSort('age')">Age Serveur</button>
+        </div>
+
+        <div id="servers"></div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
