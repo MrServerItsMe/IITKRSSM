@@ -1,36 +1,55 @@
 from flask import Flask, render_template, jsonify, request
 import json
 import os
+import sqlite3
 import requests
+from datetime import datetime
 
 app = Flask(__name__)
 
 # Configuration
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-JSON_FILE = os.path.join(BASE_DIR, "servers.json")
+DB_FILE = os.path.join(BASE_DIR, "servers.db")
 PLACE_ID = 112233665771826
 
+app.static_folder = 'static'
+app.template_folder = 'templates'
+
+# -----------------------------
+# DATABASE SETUP
+# -----------------------------
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS servers (
+            jobId TEXT PRIMARY KEY,
+            name TEXT,
+            recordedAt TEXT,
+            serverTimeAtRecord INTEGER
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+# Init DB au démarrage
+init_db()
 
 # -----------------------------
 # LOAD / SAVE SERVERS
 # -----------------------------
 def load_servers():
     try:
-        if not os.path.exists(JSON_FILE):
-            return []
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute("SELECT * FROM servers")
+        servers = [dict(row) for row in cursor.fetchall()]
+        conn.close()
 
-        with open(JSON_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        for server in servers:
+            if not server.get("name"):
+                server["name"] = "Server"
 
-        if not isinstance(data, list):
-            return []
-
-        for i, server in enumerate(data):
-            if "name" not in server or not server.get("name"):
-                server["name"] = f"Server {i + 1}"
-
-        return data
-
+        return servers
     except Exception as e:
         print("load_servers error:", e)
         return []
@@ -38,27 +57,30 @@ def load_servers():
 
 def save_servers(data):
     try:
-        if not isinstance(data, list):
-            return
-
-        for i, server in enumerate(data):
-            if "name" not in server or not server.get("name"):
-                server["name"] = f"Server {i + 1}"
-
-        with open(JSON_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
-
+        conn = sqlite3.connect(DB_FILE)
+        for server in data:
+            conn.execute('''
+                INSERT OR REPLACE INTO servers 
+                (jobId, name, recordedAt, serverTimeAtRecord)
+                VALUES (?, ?, ?, ?)
+            ''', (
+                server.get("jobId"),
+                server.get("name"),
+                server.get("recordedAt"),
+                server.get("serverTimeAtRecord")
+            ))
+        conn.commit()
+        conn.close()
     except Exception as e:
         print("save_servers error:", e)
 
 
 # -----------------------------
-# ROBLOX API
+# ROBLOX API (inchangée)
 # -----------------------------
 def get_current_jobids():
     try:
         url = f"https://games.roblox.com/v1/games/{PLACE_ID}/servers/Public"
-
         servers_list = []
         cursor = None
 
@@ -68,13 +90,11 @@ def get_current_jobids():
                 params["cursor"] = cursor
 
             response = requests.get(url, params=params, timeout=10)
-
             if response.status_code != 200:
                 print("Roblox API error:", response.status_code)
                 return []
 
             data = response.json()
-
             for server in data.get("data", []):
                 job_id = server.get("id")
                 if job_id:
@@ -85,7 +105,6 @@ def get_current_jobids():
                 break
 
         return servers_list
-
     except Exception as e:
         print(f"Erreur Roblox API: {e}")
         return []
@@ -107,7 +126,6 @@ def get_servers():
 @app.route('/api/servers', methods=['POST'])
 def save_servers_route():
     data = request.get_json()
-
     if not data:
         return jsonify({"success": False, "error": "No data"}), 400
 
@@ -120,19 +138,11 @@ def refresh_servers():
     current_servers = load_servers()
     live_jobids = get_current_jobids()
 
-    existing = {}
-    for s in current_servers:
-        if isinstance(s, dict) and "jobId" in s:
-            existing[s["jobId"]] = s
+    existing = {s["jobId"]: s for s in current_servers if "jobId" in s}
 
     new_servers = []
-
     for index, jobId in enumerate(live_jobids):
-        if jobId in existing:
-            server_data = existing[jobId].copy()
-        else:
-            server_data = {"jobId": jobId}
-
+        server_data = existing.get(jobId, {"jobId": jobId}).copy()
         server_data["name"] = f"Server {index + 1}"
         new_servers.append(server_data)
 
@@ -147,12 +157,10 @@ def join_server(jobId):
 
 
 # -----------------------------
-# MAIN (LOCAL ONLY)
+# MAIN
 # -----------------------------
 if __name__ == '__main__':
     os.makedirs('static', exist_ok=True)
     os.makedirs('templates', exist_ok=True)
-
-    print("🚀 Flask app running locally")
-
+    print("🚀 Flask app running")
     app.run(host='0.0.0.0', port=5000, debug=True)
