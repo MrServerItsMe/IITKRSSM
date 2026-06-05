@@ -1,221 +1,158 @@
-let servers = [];
-let currentSort = "event";
+from flask import Flask, render_template, jsonify, request
+import json
+import os
+import requests
 
-function formatTime(minutes) {
-    const min = Math.floor(minutes);
-    const sec = Math.floor((minutes - min) * 60);
-    return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-}
+app = Flask(__name__)
 
-function formatServerTime(totalMinutes) {
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = Math.floor(totalMinutes % 60);
-    return `${hours}h${String(minutes).padStart(2, "0")}`;
-}
+# Configuration
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+JSON_FILE = os.path.join(BASE_DIR, "servers.json")
+PLACE_ID = 112233665771826
 
-function parseServerTime(input) {
-    const match = input.match(/^(\d+)h(\d{1,2})$/);
-    if (!match) return null;
-    const hours = parseInt(match[1]);
-    const minutes = parseInt(match[2]);
-    if (minutes > 59) return null;
-    return hours * 60 + minutes;
-}
 
-function getTimerInfo(server) {
-    if (!server.recordedAt || !server.serverTimeAtRecord) {
-        return { 
-            timerDisplay: "00:00", 
-            timerColor: "#888", 
-            currentServerTime: "Not defined",
-            minutesLeft: 9999,
-            status: "unknown",
-            currentServerMinutes: 0
-        };
-    }
+# -----------------------------
+# LOAD / SAVE SERVERS
+# -----------------------------
+def load_servers():
+    try:
+        if not os.path.exists(JSON_FILE):
+            return []
 
-    const recordedDate = new Date(server.recordedAt);
-    const now = new Date();
-    const elapsedMinutes = (now - recordedDate) / 60000;
+        with open(JSON_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
 
-    const currentServerMinutes = server.serverTimeAtRecord + elapsedMinutes;
-    const currentMod = currentServerMinutes % 60;
+        if not isinstance(data, list):
+            return []
 
-    let minutesLeft, timerColor, status;
+        for i, server in enumerate(data):
+            if "name" not in server or not server.get("name"):
+                server["name"] = f"Server {i + 1}"
 
-    if (currentMod < 50) {
-        minutesLeft = 50 - currentMod;
-        timerColor = "#ff9800";
-        status = "before";
-    } else {
-        minutesLeft = 60 - currentMod;
-        timerColor = "#32cd32";
-        status = "event";
-    }
+        return data
 
-    return {
-        timerDisplay: formatTime(minutesLeft),
-        timerColor: timerColor,
-        currentServerTime: formatServerTime(currentServerMinutes),
-        minutesLeft: minutesLeft,
-        status: status,
-        currentServerMinutes: currentServerMinutes
-    };
-}
+    except Exception as e:
+        print("load_servers error:", e)
+        return []
 
-function sortServers(serversList) {
-    const list = [...serversList];
 
-    if (currentSort === "age") {
-        list.sort((a, b) => {
-            const infoA = getTimerInfo(a);
-            const infoB = getTimerInfo(b);
-            return (infoB.currentServerMinutes || 0) - (infoA.currentServerMinutes || 0);
-        });
-    } else if (currentSort === "alpha") {
-        list.sort((a, b) => naturalCompare(a.name, b.name));
-    } else {
-        list.sort((a, b) => {
-            const infoA = getTimerInfo(a);
-            const infoB = getTimerInfo(b);
+def save_servers(data):
+    try:
+        if not isinstance(data, list):
+            return
 
-            if (infoA.status === "event" && infoB.status !== "event") return -1;
-            if (infoB.status === "event" && infoA.status !== "event") return 1;
+        for i, server in enumerate(data):
+            if "name" not in server or not server.get("name"):
+                server["name"] = f"Server {i + 1}"
 
-            if (infoA.status === "event" && infoB.status === "event") {
-                return infoB.minutesLeft - infoA.minutesLeft;
-            }
+        with open(JSON_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
 
-            return infoA.minutesLeft - infoB.minutesLeft;
-        });
-    }
-    return list;
-}
+    except Exception as e:
+        print("save_servers error:", e)
 
-function naturalCompare(a, b) {
-    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
-}
 
-function renderServers() {
-    const container = document.getElementById("servers");
-    container.innerHTML = "";
+# -----------------------------
+# ROBLOX API
+# -----------------------------
+def get_current_jobids():
+    try:
+        url = f"https://games.roblox.com/v1/games/{PLACE_ID}/servers/Public"
 
-    const sortedServers = sortServers(servers);
+        servers_list = []
+        cursor = None
 
-    sortedServers.forEach((server) => {
-        const originalIndex = servers.findIndex(s => s.jobId === server.jobId);
-        const info = getTimerInfo(server);
+        while True:
+            params = {"limit": 100}
+            if cursor:
+                params["cursor"] = cursor
 
-        container.innerHTML += `
-            <div class="server-card">
-                <h2>${server.name || "Server"}</h2>
-                <p><strong>Job ID :</strong><br>${server.jobId}</p>
+            response = requests.get(url, params=params, timeout=10)
 
-                <p>
-                    <strong>Age server :</strong><br>
-                    <span style="font-size: 1.1em; color: #bbbbbb;">
-                        ${info.currentServerTime}
-                    </span>
-                </p>
+            if response.status_code != 200:
+                print("Roblox API error:", response.status_code)
+                return []
 
-                <p>
-                    <strong>Next Event :</strong><br>
-                    <span style="font-size: 1.6em; font-weight: bold; color: ${info.timerColor};">
-                        ${info.timerDisplay}
-                    </span>
-                </p>
+            data = response.json()
 
-                <div class="buttons">
-                    <button class="join-btn" onclick="joinServer('${server.jobId}')">Join</button>
-                    <button class="edit-btn" onclick="editServer(${originalIndex})">Edit</button>
-                </div>
-            </div>
-        `;
-    });
-}
+            for server in data.get("data", []):
+                job_id = server.get("id")
+                if job_id:
+                    servers_list.append(job_id)
 
-async function editServer(index) {
-    if (index < 0 || index >= servers.length) {
-        alert("Erreur : server introuvable");
-        return;
-    }
+            cursor = data.get("nextPageCursor")
+            if not cursor:
+                break
 
-    const input = prompt("Entrer le temps du serveur (ex: 12h12) :", "");
-    if (input === null) return;
+        return servers_list
 
-    const serverMinutes = parseServerTime(input.trim());
-    if (serverMinutes === null) {
-        alert("Format invalide ! (ex: 12h12)");
-        return;
-    }
+    except Exception as e:
+        print(f"Erreur Roblox API: {e}")
+        return []
 
-    servers[index].recordedAt = new Date().toISOString();
-    servers[index].serverTimeAtRecord = serverMinutes;
 
-    renderServers();
-    await saveServers();
-}
+# -----------------------------
+# ROUTES
+# -----------------------------
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-async function joinServer(jobId) {
-    try {
-        const res = await fetch(`/api/join/${jobId}`);
-        const data = await res.json();
-        window.location.href = data.joinUrl;
-    } catch (e) {
-        alert("Impossible d'ouvrir Roblox");
-    }
-}
 
-async function saveServers() {
-    try {
-        await fetch('/api/servers', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(servers)
-        });
-    } catch (e) {
-        console.error("Erreur sauvegarde", e);
-    }
-}
+@app.route('/api/servers', methods=['GET'])
+def get_servers():
+    return jsonify(load_servers())
 
-async function refreshServers() {
-    if (!confirm("Rafraîchir la liste des serveurs ?")) 
-        return;
-    
-    try {
-        const res = await fetch('/api/refresh', { method: 'POST' });
-        const result = await res.json();
-        
-        if (Array.isArray(result)) {
-            servers = result;
-            renderServers();
-        }
-    } catch (e) {
-        alert("Erreur lors du refresh.");
-    }
-}
 
-function setSort(mode) {
-    currentSort = mode;
-    document.querySelectorAll('.sort-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.sort === mode);
-    });
-    renderServers();
-}
+@app.route('/api/servers', methods=['POST'])
+def save_servers_route():
+    data = request.get_json()
 
-function startTimers() {
-    setInterval(renderServers, 1000);
-}
+    if not data:
+        return jsonify({"success": False, "error": "No data"}), 400
 
-async function init() {
-    try {
-        const res = await fetch('/api/servers');
-        servers = await res.json();
-        renderServers();
-        startTimers();
-    } catch (e) {
-        console.error("Erreur chargement serveurs", e);
-    }
-}
+    save_servers(data)
+    return jsonify({"success": True})
 
-window.addEventListener("load", init);
+
+@app.route('/api/refresh', methods=['POST'])
+def refresh_servers():
+    current_servers = load_servers()
+    live_jobids = get_current_jobids()
+
+    existing = {}
+    for s in current_servers:
+        if isinstance(s, dict) and "jobId" in s:
+            existing[s["jobId"]] = s
+
+    new_servers = []
+
+    for index, jobId in enumerate(live_jobids):
+        if jobId in existing:
+            server_data = existing[jobId].copy()
+        else:
+            server_data = {"jobId": jobId}
+
+        server_data["name"] = f"Server {index + 1}"
+        new_servers.append(server_data)
+
+    save_servers(new_servers)
+    return jsonify(new_servers)
+
+
+@app.route('/api/join/<jobId>')
+def join_server(jobId):
+    url = f"roblox://experiences/start?placeId={PLACE_ID}&gameInstanceId={jobId}"
+    return jsonify({"joinUrl": url})
+
+
+# -----------------------------
+# MAIN (LOCAL ONLY)
+# -----------------------------
+if __name__ == '__main__':
+    os.makedirs('static', exist_ok=True)
+    os.makedirs('templates', exist_ok=True)
+
+    print("🚀 Flask app running locally")
+
+    app.run(host='0.0.0.0', port=5000, debug=True)
