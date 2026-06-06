@@ -1,44 +1,56 @@
 from flask import Flask, render_template, jsonify, request, redirect
 import os
-import sqlite3
 import requests
 import time
+import psycopg2
+import psycopg2.extras
 
 app = Flask(__name__)
 
 # -----------------------------
 # CONFIG
 # -----------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, "servers.db")
 PLACE_ID = 112233665771826
 
 app.static_folder = 'static'
 app.template_folder = 'templates'
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # -----------------------------
 # CACHE ROBLOX API
 # -----------------------------
 cached_servers = []
 last_fetch = 0
-CACHE_DURATION = 30  # secondes
+CACHE_DURATION = 30
 
 # -----------------------------
-# DATABASE
+# DB CONNECTION
+# -----------------------------
+def get_db():
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
+
+# -----------------------------
+# INIT DB
 # -----------------------------
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db()
+    cur = conn.cursor()
 
-    conn.execute('''
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS servers (
             jobId TEXT PRIMARY KEY,
             name TEXT,
             recordedAt TEXT,
             serverTimeAtRecord INTEGER
         )
-    ''')
+    """)
 
     conn.commit()
+    cur.close()
     conn.close()
 
 init_db()
@@ -48,17 +60,18 @@ init_db()
 # -----------------------------
 def load_servers():
     try:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
+        conn = get_db()
+        cur = conn.cursor()
 
-        cursor = conn.execute("SELECT * FROM servers")
-        servers = [dict(row) for row in cursor.fetchall()]
+        cur.execute("SELECT * FROM servers")
+        servers = cur.fetchall()
 
+        cur.close()
         conn.close()
 
-        for server in servers:
-            if not server.get("name"):
-                server["name"] = "Server"
+        for s in servers:
+            if not s.get("name"):
+                s["name"] = "Server"
 
         return servers
 
@@ -71,16 +84,20 @@ def load_servers():
 # -----------------------------
 def replace_servers(data):
     try:
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_db()
+        cur = conn.cursor()
 
-        conn.execute("DELETE FROM servers")
+        cur.execute("DELETE FROM servers")
 
         for server in data:
-            conn.execute('''
-                INSERT INTO servers
-                (jobId, name, recordedAt, serverTimeAtRecord)
-                VALUES (?, ?, ?, ?)
-            ''', (
+            cur.execute("""
+                INSERT INTO servers (jobId, name, recordedAt, serverTimeAtRecord)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (jobId) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    recordedAt = EXCLUDED.recordedAt,
+                    serverTimeAtRecord = EXCLUDED.serverTimeAtRecord
+            """, (
                 server.get("jobId"),
                 server.get("name"),
                 server.get("recordedAt"),
@@ -88,6 +105,7 @@ def replace_servers(data):
             ))
 
         conn.commit()
+        cur.close()
         conn.close()
 
     except Exception as e:
@@ -96,14 +114,12 @@ def replace_servers(data):
 # -----------------------------
 # ROBLOX API
 # -----------------------------
-
 def get_current_jobids():
     global cached_servers, last_fetch
 
     try:
         now = time.time()
 
-        # cache
         if now - last_fetch < CACHE_DURATION:
             return cached_servers
 
@@ -111,11 +127,9 @@ def get_current_jobids():
 
         servers_list = []
         seen = set()
-
         cursor = None
 
         while True:
-
             params = {
                 "limit": 100,
                 "sortOrder": "Asc"
@@ -124,31 +138,21 @@ def get_current_jobids():
             if cursor:
                 params["cursor"] = cursor
 
-            response = requests.get(
-                url,
-                params=params,
-                timeout=10
-            )
+            response = requests.get(url, params=params, timeout=10)
 
             if response.status_code != 200:
-                print("Roblox API error:", response.status_code)
                 return []
 
             data = response.json()
 
             for server in data.get("data", []):
-
                 job_id = server.get("id")
 
-                # évite doublons MAIS garde ordre
                 if job_id and job_id not in seen:
-
                     seen.add(job_id)
-
                     servers_list.append(job_id)
 
             cursor = data.get("nextPageCursor")
-
             if not cursor:
                 break
 
@@ -158,7 +162,7 @@ def get_current_jobids():
         return servers_list
 
     except Exception as e:
-        print("Erreur Roblox API:", e)
+        print("Roblox API error:", e)
         return []
 
 # -----------------------------
@@ -177,13 +181,9 @@ def save_servers_route():
     data = request.get_json()
 
     if not data:
-        return jsonify({
-            "success": False,
-            "error": "No data"
-        }), 400
+        return jsonify({"success": False}), 400
 
     replace_servers(data)
-
     return jsonify({"success": True})
 
 @app.route('/api/refresh', methods=['POST'])
@@ -191,25 +191,16 @@ def refresh_servers():
     current_servers = load_servers()
     live_jobids = get_current_jobids()
 
-    existing = {
-        s["jobId"]: s
-        for s in current_servers
-        if "jobId" in s
-    }
+    existing = {s["jobid"]: s for s in current_servers}
 
     new_servers = []
 
     for index, jobId in enumerate(live_jobids):
-        server_data = existing.get(jobId, {
-            "jobId": jobId
-        }).copy()
-
+        server_data = existing.get(jobId, {"jobid": jobId}).copy()
         server_data["name"] = f"Server {index + 1}"
-
         new_servers.append(server_data)
 
     replace_servers(new_servers)
-
     return jsonify(new_servers)
 
 @app.route('/join/<jobId>')
@@ -221,11 +212,9 @@ def join_server(jobId):
 # -----------------------------
 # MAIN
 # -----------------------------
-
 if __name__ == '__main__':
     os.makedirs('static', exist_ok=True)
     os.makedirs('templates', exist_ok=True)
 
     port = int(os.environ.get("PORT", 10000))
-
     app.run(host='0.0.0.0', port=port, debug=False)
