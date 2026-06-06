@@ -18,14 +18,14 @@ app.template_folder = 'templates'
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # -----------------------------
-# CACHE ROBLOX API
+# CACHE ROBLOX
 # -----------------------------
 cached_servers = []
 last_fetch = 0
 CACHE_DURATION = 30
 
 # -----------------------------
-# DB CONNECTION
+# DB
 # -----------------------------
 def get_db():
     return psycopg2.connect(
@@ -56,7 +56,7 @@ def init_db():
 init_db()
 
 # -----------------------------
-# LOAD SERVERS
+# LOAD
 # -----------------------------
 def load_servers():
     try:
@@ -64,14 +64,17 @@ def load_servers():
         cur = conn.cursor()
 
         cur.execute("SELECT * FROM servers")
-        servers = cur.fetchall()
+        rows = cur.fetchall()
 
         cur.close()
         conn.close()
 
-        for s in servers:
-            if not s.get("name"):
-                s["name"] = "Server"
+        servers = []
+        for r in rows:
+            server = dict(r)
+            if not server.get("name"):
+                server["name"] = "Server"
+            servers.append(server)
 
         return servers
 
@@ -80,7 +83,7 @@ def load_servers():
         return []
 
 # -----------------------------
-# REPLACE SERVERS
+# SAFE UPSERT
 # -----------------------------
 def replace_servers(data):
     try:
@@ -90,6 +93,13 @@ def replace_servers(data):
         cur.execute("DELETE FROM servers")
 
         for server in data:
+
+            job_id = server.get("jobId")
+
+            # 🔥 PROTECTION CRITIQUE
+            if not job_id:
+                continue
+
             cur.execute("""
                 INSERT INTO servers (jobId, name, recordedAt, serverTimeAtRecord)
                 VALUES (%s, %s, %s, %s)
@@ -98,7 +108,7 @@ def replace_servers(data):
                     recordedAt = EXCLUDED.recordedAt,
                     serverTimeAtRecord = EXCLUDED.serverTimeAtRecord
             """, (
-                server.get("jobId"),
+                job_id,
                 server.get("name"),
                 server.get("recordedAt"),
                 server.get("serverTimeAtRecord")
@@ -130,6 +140,7 @@ def get_current_jobids():
         cursor = None
 
         while True:
+
             params = {
                 "limit": 100,
                 "sortOrder": "Asc"
@@ -145,12 +156,19 @@ def get_current_jobids():
 
             data = response.json()
 
-            for server in data.get("data", []):
-                job_id = server.get("id")
+            for s in data.get("data", []):
 
-                if job_id and job_id not in seen:
-                    seen.add(job_id)
-                    servers_list.append(job_id)
+                job_id = s.get("id")
+
+                # 🔥 FILTER STRICT
+                if not job_id:
+                    continue
+
+                if job_id in seen:
+                    continue
+
+                seen.add(job_id)
+                servers_list.append(job_id)
 
             cursor = data.get("nextPageCursor")
             if not cursor:
@@ -180,7 +198,7 @@ def get_servers():
 def save_servers_route():
     data = request.get_json()
 
-    if not data:
+    if not isinstance(data, list):
         return jsonify({"success": False}), 400
 
     replace_servers(data)
@@ -188,19 +206,33 @@ def save_servers_route():
 
 @app.route('/api/refresh', methods=['POST'])
 def refresh_servers():
+
     current_servers = load_servers()
     live_jobids = get_current_jobids()
 
-    existing = {s["jobid"]: s for s in current_servers}
+    existing = {
+        s["jobId"]: s
+        for s in current_servers
+        if "jobId" in s
+    }
 
     new_servers = []
 
-    for index, jobId in enumerate(live_jobids):
-        server_data = existing.get(jobId, {"jobid": jobId}).copy()
-        server_data["name"] = f"Server {index + 1}"
+    for i, jobId in enumerate(live_jobids):
+
+        if not jobId:
+            continue
+
+        server_data = existing.get(jobId, {
+            "jobId": jobId
+        }).copy()
+
+        server_data["name"] = f"Server {i + 1}"
+
         new_servers.append(server_data)
 
     replace_servers(new_servers)
+
     return jsonify(new_servers)
 
 @app.route('/join/<jobId>')
