@@ -4,6 +4,7 @@ import requests
 import time
 import psycopg2
 import psycopg2.extras
+import sqlite3
 
 app = Flask(__name__)
 
@@ -29,7 +30,10 @@ CACHE_DURATION = 30
 # -----------------------------
 def get_db():
     if not DATABASE_URL:
-        raise Exception("DATABASE_URL is missing")
+        # Fallback to SQLite for local development
+        conn = sqlite3.connect("local_dev.db")
+        conn.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
+        return conn
 
     return psycopg2.connect(
         DATABASE_URL,
@@ -83,6 +87,17 @@ def load_servers():
         # normalize keys (IMPORTANT PostgreSQL safety)
         for s in servers:
             s["jobId"] = s.get("jobId") or s.get("jobid") or s.get("job_id")
+            
+            recorded_at = s.get("recordedAt")
+            if recorded_at is None:
+                recorded_at = s.get("recordedat")
+            s["recordedAt"] = recorded_at
+            
+            server_time = s.get("serverTimeAtRecord")
+            if server_time is None:
+                server_time = s.get("servertimeatrecord")
+            s["serverTimeAtRecord"] = server_time
+            
             if not s.get("name"):
                 s["name"] = "Server"
 
@@ -102,14 +117,16 @@ def replace_servers(data):
 
         cur.execute("DELETE FROM servers")
 
+        placeholder = "?" if not DATABASE_URL else "%s"
+
         for server in data:
             job_id = server.get("jobId")
             if not job_id:
                 continue
 
-            cur.execute("""
+            cur.execute(f"""
                 INSERT INTO servers (jobId, name, recordedAt, serverTimeAtRecord)
-                VALUES (%s, %s, %s, %s)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})
                 ON CONFLICT (jobId) DO UPDATE SET
                     name = EXCLUDED.name,
                     recordedAt = EXCLUDED.recordedAt,
