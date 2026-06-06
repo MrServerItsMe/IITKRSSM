@@ -18,14 +18,14 @@ app.template_folder = 'templates'
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # -----------------------------
-# CACHE ROBLOX
+# CACHE ROBLOX API
 # -----------------------------
 cached_servers = []
 last_fetch = 0
 CACHE_DURATION = 30
 
 # -----------------------------
-# DB
+# DB CONNECTION
 # -----------------------------
 def get_db():
     return psycopg2.connect(
@@ -56,7 +56,7 @@ def init_db():
 init_db()
 
 # -----------------------------
-# LOAD
+# LOAD SERVERS
 # -----------------------------
 def load_servers():
     try:
@@ -64,17 +64,18 @@ def load_servers():
         cur = conn.cursor()
 
         cur.execute("SELECT * FROM servers")
-        rows = cur.fetchall()
+        servers = cur.fetchall()
 
         cur.close()
         conn.close()
 
-        servers = []
-        for r in rows:
-            server = dict(r)
-            if not server.get("name"):
-                server["name"] = "Server"
-            servers.append(server)
+        for s in servers:
+            if not s.get("name"):
+                s["name"] = "Server"
+
+            # sécurité clé unique
+            if "jobId" not in s and "jobid" in s:
+                s["jobId"] = s["jobid"]
 
         return servers
 
@@ -83,7 +84,7 @@ def load_servers():
         return []
 
 # -----------------------------
-# SAFE UPSERT
+# REPLACE SERVERS
 # -----------------------------
 def replace_servers(data):
     try:
@@ -93,10 +94,9 @@ def replace_servers(data):
         cur.execute("DELETE FROM servers")
 
         for server in data:
-
             job_id = server.get("jobId")
 
-            # 🔥 PROTECTION CRITIQUE
+            # 🔥 évite NULL crash DB
             if not job_id:
                 continue
 
@@ -140,12 +140,7 @@ def get_current_jobids():
         cursor = None
 
         while True:
-
-            params = {
-                "limit": 100,
-                "sortOrder": "Asc"
-            }
-
+            params = {"limit": 100, "sortOrder": "Asc"}
             if cursor:
                 params["cursor"] = cursor
 
@@ -156,19 +151,12 @@ def get_current_jobids():
 
             data = response.json()
 
-            for s in data.get("data", []):
+            for server in data.get("data", []):
+                job_id = server.get("id")
 
-                job_id = s.get("id")
-
-                # 🔥 FILTER STRICT
-                if not job_id:
-                    continue
-
-                if job_id in seen:
-                    continue
-
-                seen.add(job_id)
-                servers_list.append(job_id)
+                if job_id and job_id not in seen:
+                    seen.add(job_id)
+                    servers_list.append(job_id)
 
             cursor = data.get("nextPageCursor")
             if not cursor:
@@ -198,7 +186,7 @@ def get_servers():
 def save_servers_route():
     data = request.get_json()
 
-    if not isinstance(data, list):
+    if not data:
         return jsonify({"success": False}), 400
 
     replace_servers(data)
@@ -206,33 +194,27 @@ def save_servers_route():
 
 @app.route('/api/refresh', methods=['POST'])
 def refresh_servers():
-
     current_servers = load_servers()
     live_jobids = get_current_jobids()
 
     existing = {
-        s["jobId"]: s
+        s.get("jobId"): s
         for s in current_servers
-        if "jobId" in s
+        if s.get("jobId")
     }
 
     new_servers = []
 
-    for i, jobId in enumerate(live_jobids):
+    for index, jobId in enumerate(live_jobids):
+        server_data = existing.get(jobId, {})
+        server_data = dict(server_data)  # copy safe
 
-        if not jobId:
-            continue
-
-        server_data = existing.get(jobId, {
-            "jobId": jobId
-        }).copy()
-
-        server_data["name"] = f"Server {i + 1}"
+        server_data["jobId"] = jobId
+        server_data["name"] = f"Server {index + 1}"
 
         new_servers.append(server_data)
 
     replace_servers(new_servers)
-
     return jsonify(new_servers)
 
 @app.route('/join/<jobId>')
