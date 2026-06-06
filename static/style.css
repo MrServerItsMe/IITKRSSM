@@ -1,32 +1,279 @@
-body {
-    font-family: Arial, sans-serif;
-    background: #1e1e2f;
-    color: white;
-    margin: 0;
-    padding: 30px;
+* {
+    box-sizing: border-box;
 }
 
+body {
+    margin: 0;
+    padding: 30px;
+
+    font-family: Arial, sans-serif;
+
+    background:
+        radial-gradient(circle at top, #2d2d50 0%, #171723 50%);
+
+    background-color: #171723;
+
+    color: white;
+
+    min-height: 100vh;
+}
+
+/* ----------------------------- */
+/* CONTAINER */
+/* ----------------------------- */
+
 .container {
-    max-width: 700px;
+    max-width: 900px;
     margin: auto;
 }
 
-h1 {
-    text-align: center;
-    margin-bottom: 25px;
+/* ----------------------------- */
+/* HEADER */
+/* ----------------------------- */
+
+.top-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+    gap: 20px;
+
+    margin-bottom: 30px;
+
+    flex-wrap: wrap;
 }
 
+h1 {
+    margin: 0;
+
+    font-size: 2.2rem;
+    font-weight: 700;
+
+    color: white;
+
+    text-shadow:
+        0 0 10px rgba(255,255,255,0.15);
+}
+
+/* ----------------------------- */
+/* SERVER CARDS */
+/* ----------------------------- */
+
 .server-card {
-    background: #2a2a40;
-    padding: 20px;
-    border-radius: 10px;
-    margin-bottom: 20px;
-    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    background:
+        linear-gradient(
+            145deg,
+            rgba(42,42,64,0.95),
+            rgba(32,32,48,0.95)
+        );
+
+    border: 1px solid rgba(255,255,255,0.05);
+
+    padding: 22px;
+
+    border-radius: 16px;
+
+    margin-bottom: 22px;
+
+    box-shadow:
+        0 8px 25px rgba(0,0,0,0.35);
+
+    transition:
+        transform 0.2s ease,
+        box-shadow 0.2s ease,
+        border-color 0.2s ease;
+}
+
+.server-card:hover {
+    transform: translateY(-3px);
+
+    border-color: rgba(255,255,255,0.12);
+
+    box-shadow:
+        0 12px 30px rgba(0,0,0,0.45);
 }
 
 .server-card h2 {
     margin-top: 0;
+    margin-bottom: 18px;
+
+    font-size: 1.5rem;
+
+    color: #ffffff;
 }
+
+.server-card p {
+    margin: 12px 0;
+
+    color: #d0d0d0;
+
+    line-height: 1.5;
+}
+
+.server-card strong {
+    color: white;
+}
+
+/* ----------------------------- */
+/* BUTTONS */
+/* ----------------------------- */
+
+.buttons {
+    display: flex;
+    gap: 12px;
+
+    margin-top: 20px;
+
+    flex-wrap: wrap;
+}
+
+button {
+    border: none;
+
+    cursor: pointer;
+
+    transition:
+        background 0.2s ease,
+        transform 0.15s ease,
+        opacity 0.2s ease;
+
+    font-weight: 600;
+}
+
+button:hover {
+    transform: translateY(-1px);
+}
+
+button:active {
+    transform: scale(0.98);
+}
+
+/* ----------------------------- */
+/* JOIN BUTTON */
+/* ----------------------------- */
+
+.join-btn {
+    background: linear-gradient(
+        135deg,
+        #28a745,
+        #34c759
+    );
+
+    color: white;
+
+    padding: 11px 18px;
+
+    border-radius: 10px;
+
+    box-shadow:
+        0 0 15px rgba(52,199,89,0.25);
+}
+
+.join-btn:hover {
+    opacity: 0.92;
+}
+
+/* ----------------------------- */
+/* EDIT BUTTON */
+/* ----------------------------- */
+
+.edit-btn {
+    background: linear-gradient(
+        135deg,
+        #ff9800,
+        #ffb340
+    );
+
+    color: white;
+
+    padding: 11px 18px;
+
+    border-radius: 10px;
+
+    box-shadow:
+        0 0 15px rgba(255,152,0,0.2);
+}
+
+.edit-btn:hover {
+    opacity: 0.92;
+}
+
+/* ----------------------------- */
+/* REFRESH BUTTON */
+/* ----------------------------- */
+
+.refresh-btn {
+    background: linear-gradient(
+        135deg,
+        #007bff,
+        #339cff
+    );
+
+    color: white;
+
+    padding: 13px 22px;
+
+    border-radius: 12px;
+
+    font-size: 15px;
+
+    box-shadow:
+        0 0 18px rgba(0,123,255,0.25);
+}
+
+.refresh-btn:hover {
+    opacity: 0.92;
+}
+
+/* ----------------------------- */
+/* SORT BUTTONS */
+/* ----------------------------- */
+
+.sort-container {
+    display: flex;
+
+    gap: 10px;
+
+    justify-content: center;
+
+    margin-bottom: 30px;
+
+    flex-wrap: wrap;
+}
+
+.sort-btn {
+    background: #2f2f5c;
+
+    color: white;
+
+    padding: 10px 16px;
+
+    border-radius: 10px;
+
+    font-size: 14px;
+
+    min-width: 120px;
+}
+
+.sort-btn:hover {
+    background: #44447a;
+}
+
+.sort-btn.active {
+    background:
+        linear-gradient(
+            135deg,
+            #5b5bff,
+            #7272ff
+        );
+
+    box-shadow:
+        0 0 18px rgba(91,91,255,0.35);
+}
+
+/* ----------------------------- */
+/* TIMER COLORS */
+/* ----------------------------- */
 
 .alive {
     color: #32cd32;
@@ -38,81 +285,61 @@ h1 {
     font-weight: bold;
 }
 
-.buttons {
-    display: flex;
-    gap: 10px;
-    margin-top: 15px;
+/* ----------------------------- */
+/* SCROLLBAR */
+/* ----------------------------- */
+
+::-webkit-scrollbar {
+    width: 10px;
 }
 
-button {
-    padding: 10px 15px;
-    background: #2f2f5c;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: 0.2s;
+::-webkit-scrollbar-track {
+    background: #1a1a2a;
 }
 
-button:hover {
+::-webkit-scrollbar-thumb {
     background: #44447a;
+    border-radius: 10px;
 }
 
-.join-btn {
-    background: #28a745;
+::-webkit-scrollbar-thumb:hover {
+    background: #5b5b9c;
 }
 
-.join-btn:hover {
-    background: #34c759;
-}
+/* ----------------------------- */
+/* MOBILE */
+/* ----------------------------- */
 
-.edit-btn {
-    background: #ff9800;
-}
+@media (max-width: 700px) {
 
-.edit-btn:hover {
-    background: #ffb340;
-}
+    body {
+        padding: 18px;
+    }
 
-.refresh-btn {
-    padding: 12px 25px;
-    background: #007bff;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    font-size: 16px;
-    cursor: pointer;
-    transition: 0.2s;
-}
+    .top-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
 
-.refresh-btn:hover {
-    background: #0056b3;
-}
+    .refresh-btn {
+        width: 100%;
+    }
 
-.sort-container {
-    display: flex;
-    gap: 8px;
-    justify-content: center;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-}
+    .buttons {
+        flex-direction: column;
+    }
 
-.sort-btn {
-    padding: 8px 16px;
-    background: #2f2f5c;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: 0.2s;
-    font-size: 14px;
-}
+    .join-btn,
+    .edit-btn {
+        width: 100%;
+    }
 
-.sort-btn:hover {
-    background: #44447a;
-}
+    .sort-btn {
+        width: 100%;
+    }
 
-.sort-btn.active {
-    background: #3f3f9c;
-    font-weight: bold;
+    h1 {
+        text-align: center;
+        font-size: 1.8rem;
+    }
 }
