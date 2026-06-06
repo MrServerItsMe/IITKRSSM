@@ -1,313 +1,233 @@
-let servers = [];
-let currentSort = "event";
-
-const EVENT_START = 50;
-
-console.log("✅ app.js chargé");
-
-/* -----------------------------
-   UTILS
------------------------------ */
-
-function escapeHtml(str) {
-    return String(str)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-function formatTime(minutes) {
-    const min = Math.floor(minutes);
-    const sec = Math.floor((minutes - min) * 60);
-    return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-}
-
-function formatServerTime(totalMinutes) {
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = Math.floor(totalMinutes % 60);
-    return `${hours}h${String(minutes).padStart(2, "0")}`;
-}
-
-function parseServerTime(input) {
-    const match = input.match(/^(\d+)h(\d{1,2})$/);
-    if (!match) return null;
-
-    const hours = parseInt(match[1]);
-    const minutes = parseInt(match[2]);
-
-    if (minutes > 59) return null;
-
-    return hours * 60 + minutes;
-}
-
-/* -----------------------------
-   TIMER LOGIC
------------------------------ */
-
-function getTimerInfo(server) {
-    if (!server?.recordedAt || !server?.serverTimeAtRecord) {
-        return {
-            timerDisplay: "00:00",
-            timerColor: "#888",
-            currentServerTime: "Non défini",
-            minutesLeft: 9999,
-            status: "unknown",
-            currentServerMinutes: 0
-        };
-    }
-
-    const recordedDate = new Date(server.recordedAt);
-    const now = new Date();
-
-    const elapsedMinutes = (now - recordedDate) / 60000;
-
-    const currentServerMinutes =
-        server.serverTimeAtRecord + elapsedMinutes;
-
-    const currentMod = currentServerMinutes % 60;
-
-    let minutesLeft, timerColor, status;
-
-    if (currentMod < EVENT_START) {
-        minutesLeft = EVENT_START - currentMod;
-        timerColor = "#ff9800";
-        status = "before";
-    } else {
-        minutesLeft = 60 - currentMod;
-        timerColor = "#32cd32";
-        status = "event";
-    }
-
-    return {
-        timerDisplay: formatTime(minutesLeft),
-        timerColor,
-        currentServerTime: formatServerTime(currentServerMinutes),
-        minutesLeft,
-        status,
-        currentServerMinutes
-    };
-}
-
-/* -----------------------------
-   SORTING
------------------------------ */
-
-function sortServers(list) {
-    const arr = [...list];
-
-    if (currentSort === "age") {
-        return arr.sort((a, b) =>
-            getTimerInfo(b).currentServerMinutes -
-            getTimerInfo(a).currentServerMinutes
-        );
-    }
-
-    if (currentSort === "initial") {
-        return arr; // ordre backend (Roblox API)
-    }
-
-    // default = event
-    return arr.sort((a, b) => {
-        const A = getTimerInfo(a);
-        const B = getTimerInfo(b);
-
-        if (A.status !== B.status) {
-            return A.status === "event" ? -1 : 1;
-        }
-
-        return B.minutesLeft - A.minutesLeft;
-    });
-}
-
-/* -----------------------------
-   RENDER
------------------------------ */
-
-function renderServers() {
-    const container = document.getElementById("servers");
-    if (!container) return;
-
-    const sorted = sortServers(servers);
-
-    container.innerHTML = sorted.map((server, i) => {
-        const info = getTimerInfo(server);
-
-        const originalIndex = servers.findIndex(
-            s => s.jobId === server.jobId
-        );
-
-        return `
-        <div class="server-card">
-
-            <h2>${escapeHtml(server.name || "Server")}</h2>
-
-            <p>
-                <strong>Job ID :</strong><br>
-                ${escapeHtml(server.jobId)}
-            </p>
-
-            <p>
-                <strong>Age server :</strong><br>
-                <span id="age-${server.jobId}">
-                    ${info.currentServerTime}
-                </span>
-            </p>
-
-            <p>
-                <strong>Next Event :</strong><br>
-                <span
-                    id="timer-${server.jobId}"
-                    style="color:${info.timerColor}; font-size:1.6em; font-weight:bold;"
-                >
-                    ${info.timerDisplay}
-                </span>
-            </p>
-
-            <div class="buttons">
-
-                <button onclick="joinServer('${server.jobId}')">
-                    Join
-                </button>
-
-                <button onclick="editServer(${originalIndex})">
-                    Edit
-                </button>
-
-            </div>
-
-        </div>
-        `;
-    }).join("");
-}
-
-/* -----------------------------
-   LIVE TIMER UPDATE
------------------------------ */
-
-function updateTimersOnly() {
-    for (const server of servers) {
-        const info = getTimerInfo(server);
-
-        const timerEl = document.getElementById(`timer-${server.jobId}`);
-        const ageEl = document.getElementById(`age-${server.jobId}`);
-
-        if (timerEl) {
-            timerEl.textContent = info.timerDisplay;
-            timerEl.style.color = info.timerColor;
-        }
-
-        if (ageEl) {
-            ageEl.textContent = info.currentServerTime;
-        }
-    }
-}
-
-/* -----------------------------
-   ACTIONS
------------------------------ */
-
-function joinServer(jobId) {
-    window.location.href = `/join/${jobId}`;
-}
-
-async function editServer(index) {
-    const input = prompt("Temps du serveur (ex: 12h12) :");
-    if (!input) return;
-
-    const minutes = parseServerTime(input.trim());
-    if (minutes === null) {
-        return alert("Format invalide (ex: 12h12)");
-    }
-
-    servers[index].recordedAt = new Date().toISOString();
-    servers[index].serverTimeAtRecord = minutes;
-
-    renderServers();
-    await saveServers();
-}
-
-function setSort(mode) {
-    currentSort = mode;
-
-    document.querySelectorAll(".sort-btn").forEach(btn => {
-        btn.classList.toggle(
-            "active",
-            btn.dataset.sort === mode
-        );
-    });
-
-    renderServers();
-}
-
-/* -----------------------------
-   API
------------------------------ */
-
-async function saveServers() {
-    try {
-        await fetch("/api/servers", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(servers)
-        });
-    } catch (e) {
-        console.error("saveServers error", e);
-    }
-}
-
-async function refreshServers(silent = false) {
-    if (!silent) {
-        if (!confirm("Rafraîchir les serveurs ?")) return;
-    }
-
-    try {
-        const res = await fetch("/api/refresh", { method: "POST" });
-        const data = await res.json();
-
-        if (Array.isArray(data)) {
-            servers = data;
-            renderServers();
-        }
-
-    } catch (e) {
-        console.error(e);
-        if (!silent) alert("Erreur refresh");
-    }
-}
-
-/* -----------------------------
-   INIT
------------------------------ */
-
-async function init() {
-    try {
-        const res = await fetch("/api/servers");
-        servers = await res.json();
-
-        renderServers();
-
-        setInterval(updateTimersOnly, 1000);
-        setInterval(() => refreshServers(true), 60000);
-
-        console.log("✅ Init OK:", servers.length);
-
-    } catch (e) {
-        console.error(e);
-
-        document.getElementById("servers").innerHTML =
-            `<p style="color:red">Erreur backend</p>`;
-    }
-}
-
-window.addEventListener("load", init);
-
-/* -----------------------------
-   EXPORT GLOBAL (IMPORTANT)
------------------------------ */
-
-window.joinServer = joinServer;
-window.editServer = editServer;
-window.refreshServers = refreshServers;
-window.setSort = setSort;
+from flask import Flask, render_template, jsonify, request, redirect
+import os
+import requests
+import time
+import psycopg2
+import psycopg2.extras
+
+app = Flask(__name__)
+
+# -----------------------------
+# CONFIG
+# -----------------------------
+PLACE_ID = 112233665771826
+
+app.static_folder = "static"
+app.template_folder = "templates"
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+# -----------------------------
+# CACHE ROBLOX API
+# -----------------------------
+cached_servers = []
+last_fetch = 0
+CACHE_DURATION = 30
+
+# -----------------------------
+# DB CONNECTION (SAFE)
+# -----------------------------
+def get_db():
+    if not DATABASE_URL:
+        raise Exception("DATABASE_URL is missing")
+
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
+
+# -----------------------------
+# INIT DB
+# -----------------------------
+def init_db():
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS servers (
+                jobId TEXT PRIMARY KEY,
+                name TEXT,
+                recordedAt TEXT,
+                serverTimeAtRecord INTEGER
+            )
+        """)
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        print("DB INIT OK")
+
+    except Exception as e:
+        print("DB INIT ERROR:", e)
+
+# Run DB init on startup (Render safe)
+with app.app_context():
+    init_db()
+
+# -----------------------------
+# LOAD SERVERS
+# -----------------------------
+def load_servers():
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("SELECT * FROM servers")
+        servers = cur.fetchall()
+
+        cur.close()
+        conn.close()
+
+        # normalize keys (IMPORTANT PostgreSQL safety)
+        for s in servers:
+            s["jobId"] = s.get("jobId") or s.get("jobid") or s.get("job_id")
+            if not s.get("name"):
+                s["name"] = "Server"
+
+        return servers
+
+    except Exception as e:
+        print("load_servers error:", e)
+        return []
+
+# -----------------------------
+# REPLACE SERVERS (SAFE UPSERT)
+# -----------------------------
+def replace_servers(data):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("DELETE FROM servers")
+
+        for server in data:
+            job_id = server.get("jobId")
+            if not job_id:
+                continue
+
+            cur.execute("""
+                INSERT INTO servers (jobId, name, recordedAt, serverTimeAtRecord)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (jobId) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    recordedAt = EXCLUDED.recordedAt,
+                    serverTimeAtRecord = EXCLUDED.serverTimeAtRecord
+            """, (
+                job_id,
+                server.get("name"),
+                server.get("recordedAt"),
+                server.get("serverTimeAtRecord")
+            ))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        print("replace_servers error:", e)
+
+# -----------------------------
+# ROBLOX API
+# -----------------------------
+def get_current_jobids():
+    global cached_servers, last_fetch
+
+    try:
+        now = time.time()
+
+        if now - last_fetch < CACHE_DURATION:
+            return cached_servers
+
+        url = f"https://games.roblox.com/v1/games/{PLACE_ID}/servers/Public"
+
+        servers_list = []
+        seen = set()
+        cursor = None
+
+        while True:
+            params = {"limit": 100, "sortOrder": "Asc"}
+            if cursor:
+                params["cursor"] = cursor
+
+            r = requests.get(url, params=params, timeout=10)
+
+            if r.status_code != 200:
+                return []
+
+            data = r.json()
+
+            for server in data.get("data", []):
+                job_id = server.get("id")
+                if job_id and job_id not in seen:
+                    seen.add(job_id)
+                    servers_list.append(job_id)
+
+            cursor = data.get("nextPageCursor")
+            if not cursor:
+                break
+
+        cached_servers = servers_list
+        last_fetch = now
+
+        return servers_list
+
+    except Exception as e:
+        print("Roblox API error:", e)
+        return []
+
+# -----------------------------
+# ROUTES
+# -----------------------------
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/api/servers", methods=["GET"])
+def api_get_servers():
+    return jsonify(load_servers())
+
+@app.route("/api/servers", methods=["POST"])
+def api_save_servers():
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"success": False}), 400
+
+    replace_servers(data)
+    return jsonify({"success": True})
+
+@app.route("/api/refresh", methods=["POST"])
+def api_refresh():
+    current = load_servers()
+    live = get_current_jobids()
+
+    existing = {s.get("jobId"): s for s in current if s.get("jobId")}
+
+    new_servers = []
+
+    for i, jobId in enumerate(live):
+        s = dict(existing.get(jobId, {}))
+
+        s["jobId"] = jobId
+        s["name"] = f"Server {i + 1}"
+
+        new_servers.append(s)
+
+    replace_servers(new_servers)
+
+    return jsonify(new_servers)
+
+@app.route("/join/<jobId>")
+def join(jobId):
+    return redirect(
+        f"roblox://experiences/start?placeId={PLACE_ID}&gameInstanceId={jobId}"
+    )
+
+# -----------------------------
+# MAIN
+# -----------------------------
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=False)
