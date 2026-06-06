@@ -12,8 +12,8 @@ app = Flask(__name__)
 # -----------------------------
 PLACE_ID = 112233665771826
 
-app.static_folder = 'static'
-app.template_folder = 'templates'
+app.static_folder = "static"
+app.template_folder = "templates"
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -25,9 +25,12 @@ last_fetch = 0
 CACHE_DURATION = 30
 
 # -----------------------------
-# DB CONNECTION
+# DB CONNECTION (SAFE)
 # -----------------------------
 def get_db():
+    if not DATABASE_URL:
+        raise Exception("DATABASE_URL is missing")
+
     return psycopg2.connect(
         DATABASE_URL,
         cursor_factory=psycopg2.extras.RealDictCursor
@@ -37,23 +40,31 @@ def get_db():
 # INIT DB
 # -----------------------------
 def init_db():
-    conn = get_db()
-    cur = conn.cursor()
+    try:
+        conn = get_db()
+        cur = conn.cursor()
 
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS servers (
-            jobId TEXT PRIMARY KEY,
-            name TEXT,
-            recordedAt TEXT,
-            serverTimeAtRecord INTEGER
-        )
-    """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS servers (
+                jobId TEXT PRIMARY KEY,
+                name TEXT,
+                recordedAt TEXT,
+                serverTimeAtRecord INTEGER
+            )
+        """)
 
-    conn.commit()
-    cur.close()
-    conn.close()
+        conn.commit()
+        cur.close()
+        conn.close()
 
-init_db()
+        print("DB INIT OK")
+
+    except Exception as e:
+        print("DB INIT ERROR:", e)
+
+# Run DB init on startup (Render safe)
+with app.app_context():
+    init_db()
 
 # -----------------------------
 # LOAD SERVERS
@@ -69,13 +80,11 @@ def load_servers():
         cur.close()
         conn.close()
 
+        # normalize keys (IMPORTANT PostgreSQL safety)
         for s in servers:
+            s["jobId"] = s.get("jobId") or s.get("jobid") or s.get("job_id")
             if not s.get("name"):
                 s["name"] = "Server"
-
-            # sécurité clé unique
-            if "jobId" not in s and "jobid" in s:
-                s["jobId"] = s["jobid"]
 
         return servers
 
@@ -84,7 +93,7 @@ def load_servers():
         return []
 
 # -----------------------------
-# REPLACE SERVERS
+# REPLACE SERVERS (SAFE UPSERT)
 # -----------------------------
 def replace_servers(data):
     try:
@@ -95,8 +104,6 @@ def replace_servers(data):
 
         for server in data:
             job_id = server.get("jobId")
-
-            # 🔥 évite NULL crash DB
             if not job_id:
                 continue
 
@@ -144,16 +151,15 @@ def get_current_jobids():
             if cursor:
                 params["cursor"] = cursor
 
-            response = requests.get(url, params=params, timeout=10)
+            r = requests.get(url, params=params, timeout=10)
 
-            if response.status_code != 200:
+            if r.status_code != 200:
                 return []
 
-            data = response.json()
+            data = r.json()
 
             for server in data.get("data", []):
                 job_id = server.get("id")
-
                 if job_id and job_id not in seen:
                     seen.add(job_id)
                     servers_list.append(job_id)
@@ -174,16 +180,16 @@ def get_current_jobids():
 # -----------------------------
 # ROUTES
 # -----------------------------
-@app.route('/')
+@app.route("/")
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/api/servers', methods=['GET'])
-def get_servers():
+@app.route("/api/servers", methods=["GET"])
+def api_get_servers():
     return jsonify(load_servers())
 
-@app.route('/api/servers', methods=['POST'])
-def save_servers_route():
+@app.route("/api/servers", methods=["POST"])
+def api_save_servers():
     data = request.get_json()
 
     if not data:
@@ -192,33 +198,29 @@ def save_servers_route():
     replace_servers(data)
     return jsonify({"success": True})
 
-@app.route('/api/refresh', methods=['POST'])
-def refresh_servers():
-    current_servers = load_servers()
-    live_jobids = get_current_jobids()
+@app.route("/api/refresh", methods=["POST"])
+def api_refresh():
+    current = load_servers()
+    live = get_current_jobids()
 
-    existing = {
-        s.get("jobId"): s
-        for s in current_servers
-        if s.get("jobId")
-    }
+    existing = {s.get("jobId"): s for s in current if s.get("jobId")}
 
     new_servers = []
 
-    for index, jobId in enumerate(live_jobids):
-        server_data = existing.get(jobId, {})
-        server_data = dict(server_data)  # copy safe
+    for i, jobId in enumerate(live):
+        s = dict(existing.get(jobId, {}))
 
-        server_data["jobId"] = jobId
-        server_data["name"] = f"Server {index + 1}"
+        s["jobId"] = jobId
+        s["name"] = f"Server {i + 1}"
 
-        new_servers.append(server_data)
+        new_servers.append(s)
 
     replace_servers(new_servers)
+
     return jsonify(new_servers)
 
-@app.route('/join/<jobId>')
-def join_server(jobId):
+@app.route("/join/<jobId>")
+def join(jobId):
     return redirect(
         f"roblox://experiences/start?placeId={PLACE_ID}&gameInstanceId={jobId}"
     )
@@ -226,9 +228,6 @@ def join_server(jobId):
 # -----------------------------
 # MAIN
 # -----------------------------
-if __name__ == '__main__':
-    os.makedirs('static', exist_ok=True)
-    os.makedirs('templates', exist_ok=True)
-
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False)
