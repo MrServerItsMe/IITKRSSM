@@ -30,7 +30,7 @@ CACHE_DURATION = 30
 # -----------------------------
 def get_db():
     if not DATABASE_URL:
-        # Fallback to SQLite for local development
+        # Fallback SQLite pour dev local
         conn = sqlite3.connect("local_dev.db")
         conn.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
         return conn
@@ -60,18 +60,17 @@ def init_db():
         conn.commit()
         cur.close()
         conn.close()
-
         print("DB INIT OK")
 
     except Exception as e:
         print("DB INIT ERROR:", e)
 
-# Run DB init on startup (Render safe)
+# Run DB init on startup
 with app.app_context():
     init_db()
 
 # -----------------------------
-# LOAD SERVERS
+# LOAD SERVERS (avec noms prédéfinis)
 # -----------------------------
 def load_servers():
     try:
@@ -84,7 +83,7 @@ def load_servers():
         cur.close()
         conn.close()
 
-        # normalize keys (IMPORTANT PostgreSQL safety)
+        # Normalisation keys
         for s in servers:
             s["jobId"] = s.get("jobId") or s.get("jobid") or s.get("job_id")
             
@@ -226,9 +225,9 @@ def api_refresh():
 
     for i, jobId in enumerate(live):
         s = dict(existing.get(jobId, {}))
-
+        
         s["jobId"] = jobId
-        s["name"] = f"Server {i + 1}"
+        s["name"] = s.get("name") or f"Server {i + 1}"
 
         new_servers.append(s)
 
