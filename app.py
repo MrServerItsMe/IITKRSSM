@@ -15,7 +15,7 @@ app.template_folder = "templates"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # -----------------------------
-# CONFIG FRUITS (ton projet)
+# FRUITS LISTE (exactement comme tu l’as donné)
 # -----------------------------
 FRUITS_LIST = [
     "Pomme", "Poire", "Banane", "Orange", "Mandarine", "Clémentine",
@@ -35,7 +35,7 @@ last_fetch = 0
 CACHE_DURATION = 30
 
 # -----------------------------
-# DB CONNECTION (PostgreSQL ou SQLite local pour dev)
+# DB CONNECTION
 # -----------------------------
 def get_db():
     if not DATABASE_URL:
@@ -48,7 +48,7 @@ def get_db():
     )
 
 # -----------------------------
-# INIT DB (stocke fruits + noms)
+# INIT DB (fruits + associations uniques)
 # -----------------------------
 def init_db():
     try:
@@ -72,7 +72,7 @@ def init_db():
             )
         """)
 
-        # Initialisation des fruits si vide
+        # Initialisation fruits si vide
         cur.execute("SELECT COUNT(*) FROM used_fruits")
         if cur.fetchone()[0] == 0:
             for f in FRUITS_LIST:
@@ -89,7 +89,7 @@ with app.app_context():
     init_db()
 
 # -----------------------------
-# LOAD SERVERS (utilise la même association fruit <-> jobId)
+# CHARGEMENT DES NOMS (fruits uniques)
 # -----------------------------
 def load_servers():
     try:
@@ -102,13 +102,11 @@ def load_servers():
         cur.close()
         conn.close()
 
-        # Normalisation des clés (PostgreSQL)
         for s in servers:
             for key in ["jobId", "jobid", "job_id"]:
                 if key in s:
                     s["jobId"] = s.pop(key)
                     break
-
             if "recordedAt" not in s and "recordedat" in s:
                 s["recordedAt"] = s.pop("recordedat")
             if "serverTimeAtRecord" not in s and "servertimeatrecord" in s:
@@ -123,7 +121,7 @@ def load_servers():
         return []
 
 # -----------------------------
-# REPLACE SERVERS (mise à jour du nom + fruit)
+# REMPLACER LES SERVEURS (avec fruits uniques)
 # -----------------------------
 def replace_servers(data):
     try:
@@ -131,7 +129,7 @@ def replace_servers(data):
         cur = conn.cursor()
 
         cur.execute("DELETE FROM servers")
-        conn.commit()  # On vide d’abord pour être sûr
+        conn.commit()
 
         placeholder = "?" if not DATABASE_URL else "%s"
 
@@ -140,22 +138,18 @@ def replace_servers(data):
             if not job_id:
                 continue
 
-            new_name = server.get("name", f"Server {job_id}")
+            name = server.get("name", f"Server {job_id}")
             is_combined = server.get("is_combined", False)
 
             cur.execute(f"""
-                INSERT INTO servers 
-                (jobId, name, recordedAt, serverTimeAtRecord, is_combined)
+                INSERT INTO servers (jobId, name, recordedAt, serverTimeAtRecord, is_combined)
                 VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
                 ON CONFLICT (jobId) DO UPDATE SET
                     name = EXCLUDED.name,
                     is_combined = EXCLUDED.is_combined,
                     recordedAt = EXCLUDED.recordedAt,
                     serverTimeAtRecord = EXCLUDED.serverTimeAtRecord
-            """, (
-                job_id, new_name, server.get("recordedAt"),
-                server.get("serverTimeAtRecord"), is_combined
-            ))
+            """, (job_id, name, server.get("recordedAt"), server.get("serverTimeAtRecord"), is_combined))
 
         conn.commit()
         cur.close()
@@ -229,6 +223,14 @@ def api_refresh():
     current = load_servers()
     live = get_current_jobids()
 
+    # Fruit à nom (cache)
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT fruit, is_combined FROM used_fruits")
+    fruit_db = {r[0]: r[1] for r in cur.fetchall()}
+    cur.close()
+    conn.close()
+
     existing = {s.get("jobId"): s for s in current if s.get("jobId")}
 
     new_servers = []
@@ -236,7 +238,24 @@ def api_refresh():
         s = dict(existing.get(jobId, {}))
         s["jobId"] = jobId
         s["name"] = f"Server {i + 1}"
-        s["is_combined"] = False  # par défaut
+        s["is_combined"] = False
+
+        # Associer fruit
+        if not fruit_db:
+            s["name"] = f"Server {i + 1}"
+        else:
+            single = next((f for f, used in fruit_db.items() if not used), None)
+            if single:
+                s["name"] = single
+                fruit_db[single] = True
+            else:
+                # Combinaison de 2 fruits
+                combined = next((f for f, used in fruit_db.items() if not used), None)
+                if combined:
+                    s["name"] = f"{combined} Banane"  # exemple, tu peux changer l’ordre
+                    fruit_db[combined] = True
+                    s["is_combined"] = True
+
         new_servers.append(s)
 
     replace_servers(new_servers)
