@@ -7,6 +7,10 @@ import psycopg2.extras
 import sqlite3
 
 app = Flask(__name__)
+
+# -----------------------------
+# CONFIG
+# -----------------------------
 PLACE_ID = 112233665771826
 
 app.static_folder = "static"
@@ -15,40 +19,29 @@ app.template_folder = "templates"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # -----------------------------
-# CONFIG FRUITS (ton projet)
-# -----------------------------
-FRUITS_LIST = [
-    "Pomme", "Poire", "Banane", "Orange", "Mandarine", "Clémentine",
-    "Citron", "Citron vert", "Pamplemousse", "Ananas", "Mangue", "Papaye",
-    "Kiwi", "Fraise", "Framboise", "Myrtille", "Mûre", "Groseille",
-    "Cerise", "Raisin", "Pastèque", "Melon", "Abricot", "Pêche",
-    "Nectarine", "Prune", "Mirabelle", "Figue", "Datte", "Grenade",
-    "Litchi", "Fruit de la passion", "Noix de coco", "Goyave", "Kaki",
-    "Coing", "Cassis", "Rhubarbe", "Canneberge", "Kumquat"
-]
-
-# -----------------------------
-# CACHE ROBLOX
+# CACHE ROBLOX API
 # -----------------------------
 cached_servers = []
 last_fetch = 0
 CACHE_DURATION = 30
 
 # -----------------------------
-# DB CONNECTION
+# DB CONNECTION (SAFE)
 # -----------------------------
 def get_db():
     if not DATABASE_URL:
+        # Fallback to SQLite for local development
         conn = sqlite3.connect("local_dev.db")
         conn.row_factory = lambda c, r: dict(zip([col[0] for col in c.description], r))
         return conn
+
     return psycopg2.connect(
         DATABASE_URL,
         cursor_factory=psycopg2.extras.RealDictCursor
     )
 
 # -----------------------------
-# INIT DB (fruits + noms + fruits par serveur)
+# INIT DB
 # -----------------------------
 def init_db():
     try:
@@ -58,81 +51,64 @@ def init_db():
         cur.execute("""
             CREATE TABLE IF NOT EXISTS servers (
                 jobId TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
+                name TEXT,
                 recordedAt TEXT,
-                serverTimeAtRecord INTEGER,
-                is_combined BOOLEAN DEFAULT FALSE
+                serverTimeAtRecord INTEGER
             )
         """)
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS used_fruits (
-                fruit TEXT PRIMARY KEY,
-                is_combined BOOLEAN DEFAULT FALSE
-            )
-        """)
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS server_fruits (
-                jobId TEXT PRIMARY KEY,
-                fruit TEXT
-            )
-        """)
-
-        # Initialisation fruits uniques
-        cur.execute("SELECT COUNT(*) FROM used_fruits")
-        if cur.fetchone()[0] == 0:
-            for f in FRUITS_LIST:
-                cur.execute("INSERT INTO used_fruits (fruit, is_combined) VALUES (%s, %s)", (f, False))
-            conn.commit()
-
+        conn.commit()
         cur.close()
         conn.close()
-        print("✅ DB fruit initialised OK")
+
+        print("DB INIT OK")
+
     except Exception as e:
         print("DB INIT ERROR:", e)
 
+# Run DB init on startup (Render safe)
 with app.app_context():
     init_db()
 
 # -----------------------------
-# LOAD SERVERS (fruits maintenant dans une table séparée)
+# LOAD SERVERS
 # -----------------------------
 def load_servers():
     try:
         conn = get_db()
         cur = conn.cursor()
 
-        cur.execute("""
-            SELECT s.*, f.fruit 
-            FROM servers s 
-            LEFT JOIN server_fruits f ON s.jobId = f.jobId
-        """)
-        rows = cur.fetchall()
+        cur.execute("SELECT * FROM servers")
+        servers = cur.fetchall()
 
         cur.close()
         conn.close()
 
-        # Normalisation PostgreSQL
-        for s in rows:
-            for key in ["jobId", "jobid", "job_id"]:
-                if key in s:
-                    s["jobId"] = s.pop(key)
-                    break
-            if "recordedAt" not in s and "recordedat" in s:
-                s["recordedAt"] = s.pop("recordedat")
-            if "serverTimeAtRecord" not in s and "servertimeatrecord" in s:
-                s["serverTimeAtRecord"] = s.pop("servertimeatrecord")
-            if "fruit" not in s or not s["fruit"]:
-                s["fruit"] = "Non attribué"
+        # normalize keys (IMPORTANT PostgreSQL safety)
+        for s in servers:
+            s["jobId"] = s.get("jobId") or s.get("jobid") or s.get("job_id")
+            
+            recorded_at = s.get("recordedAt")
+            if recorded_at is None:
+                recorded_at = s.get("recordedat")
+            s["recordedAt"] = recorded_at
+            
+            server_time = s.get("serverTimeAtRecord")
+            if server_time is None:
+                server_time = s.get("servertimeatrecord")
+            s["serverTimeAtRecord"] = server_time
+            
+            if not s.get("name"):
+                s["name"] = "Server"
 
-        return rows
+        return servers
+
     except Exception as e:
         print("load_servers error:", e)
         return []
 
 # -----------------------------
-# Remplacement des fruits + nom
+# REPLACE SERVERS (SAFE UPSERT)
 # -----------------------------
 def replace_servers(data):
     try:
@@ -140,8 +116,6 @@ def replace_servers(data):
         cur = conn.cursor()
 
         cur.execute("DELETE FROM servers")
-        cur.execute("DELETE FROM server_fruits")
-        conn.commit()
 
         placeholder = "?" if not DATABASE_URL else "%s"
 
@@ -150,29 +124,24 @@ def replace_servers(data):
             if not job_id:
                 continue
 
-            new_name = server.get("name", f"Server {job_id}")
-            new_fruit = server.get("fruit")
-
             cur.execute(f"""
-                INSERT INTO servers 
-                (jobId, name, recordedAt, serverTimeAtRecord, is_combined)
-                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                INSERT INTO servers (jobId, name, recordedAt, serverTimeAtRecord)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder})
                 ON CONFLICT (jobId) DO UPDATE SET
                     name = EXCLUDED.name,
-                    is_combined = EXCLUDED.is_combined,
                     recordedAt = EXCLUDED.recordedAt,
                     serverTimeAtRecord = EXCLUDED.serverTimeAtRecord
-            """, (job_id, new_name, server.get("recordedAt"), server.get("serverTimeAtRecord"), server.get("is_combined", False)))
-
-            cur.execute("""
-                INSERT INTO server_fruits (jobId, fruit)
-                VALUES (%s, %s)
-                ON CONFLICT (jobId) DO UPDATE SET fruit = EXCLUDED.fruit
-            """, (job_id, new_fruit))
+            """, (
+                job_id,
+                server.get("name"),
+                server.get("recordedAt"),
+                server.get("serverTimeAtRecord")
+            ))
 
         conn.commit()
         cur.close()
         conn.close()
+
     except Exception as e:
         print("replace_servers error:", e)
 
@@ -181,12 +150,15 @@ def replace_servers(data):
 # -----------------------------
 def get_current_jobids():
     global cached_servers, last_fetch
+
     try:
         now = time.time()
+
         if now - last_fetch < CACHE_DURATION:
             return cached_servers
 
         url = f"https://games.roblox.com/v1/games/{PLACE_ID}/servers/Public"
+
         servers_list = []
         seen = set()
         cursor = None
@@ -195,12 +167,14 @@ def get_current_jobids():
             params = {"limit": 100, "sortOrder": "Asc"}
             if cursor:
                 params["cursor"] = cursor
+
             r = requests.get(url, params=params, timeout=10)
 
             if r.status_code != 200:
                 return []
 
             data = r.json()
+
             for server in data.get("data", []):
                 job_id = server.get("id")
                 if job_id and job_id not in seen:
@@ -213,7 +187,9 @@ def get_current_jobids():
 
         cached_servers = servers_list
         last_fetch = now
+
         return servers_list
+
     except Exception as e:
         print("Roblox API error:", e)
         return []
@@ -232,8 +208,10 @@ def api_get_servers():
 @app.route("/api/servers", methods=["POST"])
 def api_save_servers():
     data = request.get_json()
+
     if not data:
         return jsonify({"success": False}), 400
+
     replace_servers(data)
     return jsonify({"success": True})
 
@@ -245,20 +223,24 @@ def api_refresh():
     existing = {s.get("jobId"): s for s in current if s.get("jobId")}
 
     new_servers = []
+
     for i, jobId in enumerate(live):
         s = dict(existing.get(jobId, {}))
+
         s["jobId"] = jobId
         s["name"] = f"Server {i + 1}"
-        s["fruit"] = ""  # on associera plus tard
-        s["is_combined"] = False
+
         new_servers.append(s)
 
     replace_servers(new_servers)
+
     return jsonify(new_servers)
 
 @app.route("/join/<jobId>")
 def join(jobId):
-    return redirect(f"roblox://experiences/start?placeId={PLACE_ID}&gameInstanceId={jobId}")
+    return redirect(
+        f"roblox://experiences/start?placeId={PLACE_ID}&gameInstanceId={jobId}"
+    )
 
 # -----------------------------
 # MAIN
